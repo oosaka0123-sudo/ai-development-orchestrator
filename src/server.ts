@@ -4,9 +4,12 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { loadConfig } from "./config.js";
+import { repositorySchema, taskSchema } from "./inputSchemas.js";
+import { logError } from "./logging.js";
 import { executeTask, planTask } from "./orchestrator.js";
 
 const config = loadConfig();
+const secrets = [config.githubToken, config.anthropicApiKey, config.authToken];
 
 function textResult(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
@@ -28,8 +31,8 @@ function createServer(): McpServer {
   server.registerTool("plan_repository_task", {
     description: "Read a GitHub repository and ask the implementation agent for a read-only plan. This tool never edits or pushes code.",
     inputSchema: {
-      repository: z.string().describe("GitHub URL, owner/repo, or repo name under the default owner"),
-      task: z.string().min(10).describe("Complete implementation request and acceptance criteria"),
+      repository: repositorySchema,
+      task: taskSchema("Complete implementation request and acceptance criteria"),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
   }, async ({ repository, task }) => textResult(await planTask(config, repository, task)));
@@ -37,8 +40,8 @@ function createServer(): McpServer {
   server.registerTool("execute_repository_task", {
     description: "Implement an approved task on a new branch, push it, and open a pull request. Never merges or deploys.",
     inputSchema: {
-      repository: z.string().describe("GitHub URL, owner/repo, or repo name under the default owner"),
-      task: z.string().min(10).describe("Approved implementation request and acceptance criteria"),
+      repository: repositorySchema,
+      task: taskSchema("Approved implementation request and acceptance criteria"),
       confirmed: z.literal(true).describe("Must be true only after explicit user approval"),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -67,7 +70,7 @@ app.post("/mcp", async (req, res) => {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (error) {
-    console.error(error);
+    logError("mcp_request", error, secrets);
     if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal server error" }, id: null });
   }
 });
