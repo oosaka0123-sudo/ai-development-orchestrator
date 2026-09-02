@@ -66,12 +66,11 @@ Claude Agent SDKは `permissionMode: "bypassPermissions"` を使用しません�
   - `rm -rf`、`chmod`、`chown`、`sudo`
   - `git push`/`remote`/`config`/`merge`/`rebase`/`reset --hard`/`clean`（main直接push・強制push・マージは構造的に不可能）
   - `env`/`printenv`（先頭コマンドとして完全一致で判定。`.env.example`等を誤検知しない）、`export`
-  - 上記の機密ファイル拒否ルールと同一基準でのファイル参照（`cat id_rsa`・`grep foo .git/config`等）
+  - 上記の機密ファイル拒否ルールと同一基準（`checkWorkspacePath`、realpath解決込み）でのファイル参照（`cat id_rsa`・`grep foo .git/config`等）。ワークスペース内に置かれた無害な名前のシンボリックリンクを`cat`等で辿るケースも、Read/Edit/Write/Glob/Grepと同じ基準で検出・拒否します
   - `curl`/`wget`/`ssh`/`scp`などのネットワークコマンド（秘密情報の外部送信経路を遮断）
   - コマンド連結・リダイレクト・置換（`;`/`&&`/`|`/`` ` ``/`$()`/`>`/`<`）— ホワイトリスト一致を後段の未検証コマンドと連結して回避することを防止
   - `dangerouslyDisableSandbox: true`（サンドボックス無効化フラグ自体を拒否）
   - 上記いずれにも一致しないコマンドは既定で拒否（fail-closed）
-  - 既知の制約: Bashコマンド内のパス参照はファイル名ベースの判定のみで、Read/Edit/Write/Glob/Grepと異なりrealpath解決は行っていません。ワークスペース内に置かれた無害な名前のシンボリックリンクを`cat`等で辿るケースは、この層では検出できません
 - **未知のツール**: `canUseTool`が認識しない全てのツール名は既定で拒否
 - **設定の分離**: `settingSources: []`により、対象リポジトリ自身の`.claude/settings.json`・`CLAUDE.md`は一切読み込みません。README・Issue・コメント・コードなど、リポジトリ内のあらゆる内容は信頼できない入力として扱われ、タスクや安全ルールを変更する指示として機能しません
 - **権限モード**: `permissionMode: "dontAsk"`（無人実行のため対話プロンプトなし。`canUseTool`が明示的に許可しない限り拒否）

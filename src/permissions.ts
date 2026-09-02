@@ -3,6 +3,11 @@ import path from "node:path";
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import { classifySensitivity } from "./sensitiveFiles.js";
 
+// Forward declaration note: evaluateBashCommand (below) calls
+// checkWorkspacePath, which is defined further down this file -- fine at
+// runtime (function declarations are hoisted; checkWorkspacePath is used
+// only inside another function body, never at module-evaluation time).
+
 /**
  * Blocks chaining, redirection, and substitution so a whitelist match on the
  * first token (e.g. "npm test") cannot smuggle a second, unvetted command
@@ -98,25 +103,26 @@ export interface BashVerdict {
 }
 
 /**
- * Applies the same sensitive-file rules used for Read/Edit/Write (see
- * sensitiveFiles.ts) to every non-flag token in a Bash command, so e.g.
- * "cat id_rsa" or "grep foo .git/config" is denied the same way a Read
- * tool call for that path would be. This is a plain string check, not a
- * shell parser or a realpath resolution -- a symlink planted inside the
- * workspace under an innocuous name could still be dereferenced by `cat`
- * without tripping it (see the README's residual-risk note).
+ * Applies the exact same workspace-containment + sensitive-file + realpath
+ * checks used for Read/Edit/Write/Glob/Grep (checkWorkspacePath, below) to
+ * every non-flag token in a Bash command, so e.g. "cat id_rsa" or
+ * "grep foo .git/config" is denied the same way a Read tool call for that
+ * path would be -- and, since this goes through checkWorkspacePath rather
+ * than a plain string check, a symlink planted inside the workspace under
+ * an innocuous name is caught here too, not just for Read/Edit/Write.
  */
-function referencesSensitivePath(command: string): string | undefined {
+async function referencesSensitivePath(command: string, workspaceRoot: string): Promise<string | undefined> {
   const tokens = command.split(/\s+/).filter(Boolean);
   for (const token of tokens.slice(1)) {
     if (token.startsWith("-")) continue;
-    const verdict = classifySensitivity(token);
-    if (verdict.sensitive) return verdict.reason;
+    // eslint-disable-next-line no-await-in-loop -- sequential is fine; Bash commands have only a handful of tokens
+    const verdict = await checkWorkspacePath(token, workspaceRoot);
+    if (!verdict.allowed) return verdict.reason;
   }
   return undefined;
 }
 
-export function evaluateBashCommand(rawCommand: string): BashVerdict {
+export async function evaluateBashCommand(rawCommand: string, workspaceRoot: string): Promise<BashVerdict> {
   const command = rawCommand.trim();
   if (!command) return { allowed: false, reason: "Empty command." };
   if (hasShellMetacharacters(command)) {
@@ -132,7 +138,7 @@ export function evaluateBashCommand(rawCommand: string): BashVerdict {
   if (denied) {
     return { allowed: false, reason: `Command contains a disallowed operation: "${denied.trim()}".` };
   }
-  const sensitiveReason = referencesSensitivePath(command);
+  const sensitiveReason = await referencesSensitivePath(command, workspaceRoot);
   if (sensitiveReason) {
     return { allowed: false, reason: sensitiveReason };
   }
@@ -251,7 +257,7 @@ export function createCanUseTool(workspaceRoot: string): CanUseTool {
           return { behavior: "deny", message: "Disabling the sandbox is never permitted." };
         }
         const command = typeof input.command === "string" ? input.command : "";
-        const verdict = evaluateBashCommand(command);
+        const verdict = await evaluateBashCommand(command, workspaceRoot);
         if (!verdict.allowed) {
           return { behavior: "deny", message: verdict.reason ?? "Command not permitted." };
         }
