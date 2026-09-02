@@ -50,7 +50,13 @@ function createServer(): McpServer {
   return server;
 }
 
-const app = createMcpExpressApp();
+const allowedHosts = (process.env.MCP_ALLOWED_HOSTS
+  ?? "localhost,127.0.0.1,rss7-ai-orchestrator-415190643779.asia-northeast1.run.app")
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
+
+const app = createMcpExpressApp({ host: "0.0.0.0", allowedHosts });
 
 function authenticate(req: Request, res: Response, next: NextFunction) {
   if (req.headers.authorization === `Bearer ${config.authToken}`) return next();
