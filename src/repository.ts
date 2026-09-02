@@ -33,6 +33,21 @@ export function parseGitHubRepository(value: string, defaultOwner: string): Repo
   return { owner, repo, cloneUrl: `https://github.com/${owner}/${repo}.git` };
 }
 
+const GENERATED_BRANCH_NAME_RE = /^ai\/task-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/;
+
+/**
+ * Invariant check on the orchestrator's own generated branch name -- there
+ * is no user-supplied branch input today, but every branch name reaches
+ * `git checkout -b`/`git push`, so this is asserted rather than assumed
+ * before it does, and never allows "main"/"master" or anything shaped like
+ * a flag (e.g. "--force") to reach a git command as a branch argument.
+ */
+export function assertSafeBranchName(branch: string): void {
+  if (!GENERATED_BRANCH_NAME_RE.test(branch)) {
+    throw new Error(`Generated branch name failed validation: ${branch}`);
+  }
+}
+
 function gitEnv(token?: string): NodeJS.ProcessEnv {
   if (!token) return process.env;
   const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
@@ -79,4 +94,15 @@ export async function commitAndPush(
   await git(["-c", "user.name=AI Development Orchestrator", "-c", "user.email=orchestrator@users.noreply.github.com", "commit", "-m", message], cwd, token);
   await git(["push", "--set-upstream", "origin", branch], cwd, token);
   return { sha: await git(["rev-parse", "HEAD"], cwd, token), changed: true };
+}
+
+/** HEAD's commit SHA -- call this right after `prepareWorkspace` to capture the pre-implementation baseline for `diffStat`. */
+export async function getHeadSha(cwd: string, token?: string): Promise<string> {
+  return git(["rev-parse", "HEAD"], cwd, token);
+}
+
+/** `git diff --stat` between two commits, for recording what the agent actually changed. */
+export async function diffStat(cwd: string, baseSha: string, headSha: string, token?: string): Promise<string> {
+  if (baseSha === headSha) return "";
+  return git(["diff", "--stat", baseSha, headSha], cwd, token);
 }
