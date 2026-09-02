@@ -1,6 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { buildAgentEnv } from "./agentEnv.js";
 import { createCanUseTool } from "./permissions.js";
+import { createPostToolUseHook } from "./resultFilter.js";
 
 // Turn caps (existing values, kept and named): plan mode is read-only and
 // short; execute mode needs headroom to inspect, edit, and run tests.
@@ -60,6 +61,14 @@ export async function runClaudeAgent(input: {
       // the agent, only be read as data.
       settingSources: [],
       env: buildAgentEnv(input.apiKey),
+      // Second, independent enforcement point for Grep/Glob: canUseTool only
+      // gates the call's own arguments (path/glob/pattern), not which files a
+      // directory-wide search actually touches. This hook inspects the real
+      // result and strips anything sensitive before the model ever sees it
+      // (see resultFilter.ts) -- not something left to the model to police.
+      hooks: {
+        PostToolUse: [{ hooks: [createPostToolUseHook(input.cwd)] }],
+      },
       systemPrompt: {
         type: "preset",
         preset: "claude_code",

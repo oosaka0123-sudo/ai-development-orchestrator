@@ -58,6 +58,10 @@ Claude Agent SDKは `permissionMode: "bypassPermissions"` を使用しません�
   - `credentials`/`secrets.json`/`.npmrc`/`.netrc`等の既知の認証ファイル、および`secret`/`credential`/`password`/`token`/`apikey`等を含むファイル名
   - パス解決は`fs.realpath`で**シンボリックリンク・ジャンクションを解決した後にも**ワークスペース内・非機密であることを再検証（無害な名前のシンボリックリンクで`.env`や別ワークスペースを指すバイパスを防止）。存在しないパス（Write新規作成時）は最も近い実在する親ディレクトリまで遡って解決
   - 拒否理由はファイル内容や実際のパス文字列を含まない、固定カテゴリのメッセージのみ記録
+- **Grep/Globのディレクトリ検索結果に対する第二の強制フィルタ**（`src/resultFilter.ts`、`PostToolUse`フック）: `canUseTool`は呼び出し自体（`path`/`glob`/`pattern`引数）しか判定できず、ディレクトリ全体を検索した際に実際どのファイルがヒットするかは呼び出し前には分かりません。そこで実行結果を`PostToolUse`フックで検査し、モデルに返る前に機密ファイルを取り除きます。判定基準は上記と完全に同一の`checkWorkspacePath`（realpath解決込み）を再利用しており、Claude自身の自制に依存しない、コード側での強制です。
+  - `Glob`: `filenames`配列から機密ファイルを除外し、`numFiles`/`totalMatches`等の件数も除外後の値に補正
+  - `Grep`: `filenames`配列を同様に除外。`content`（マッチ本文の生テキスト）はツール固有のフォーマットであり本コードベースが解析・保証できないため、機密ファイルが1件でも含まれていた場合は部分的な再構成を試みず**内容全体を空にして返す**（`files_with_matches`/`count`モードは元々`content`を持たないため、この場合でも許可ファイルの結果は失われません）
+  - 除外の事実そのもの（該当件数・ファイル名）も結果に含めません。除外が発生してもしなくても、呼び出し元から見た結果の形は「機密ファイルが最初から存在しなかった場合」と区別できません
 - **Bashコマンド**: `npm install/ci/run/test/build`、読み取り専用git（`status`/`diff`/`log`/`show`/`branch`）、基本的なファイル閲覧コマンドのみを許可する最小ホワイトリスト方式。以下は明示的に拒否:
   - `rm -rf`、`chmod`、`chown`、`sudo`
   - `git push`/`remote`/`config`/`merge`/`rebase`/`reset --hard`/`clean`（main直接push・強制push・マージは構造的に不可能）
