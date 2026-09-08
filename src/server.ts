@@ -1,4 +1,3 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -8,13 +7,21 @@ import { loadConfig } from "./config.js";
 import { repositorySchema, taskSchema } from "./inputSchemas.js";
 import { logError } from "./logging.js";
 import { executeTask, planTask } from "./orchestrator.js";
+import {
+  createAccessToken,
+  createAuthorizationCode,
+  pkceChallenge,
+  readAccessToken,
+  readAuthorizationCode,
+  secretsMatch,
+} from "./oauth.js";
 
 const config = loadConfig();
 const secrets = [config.githubToken, config.anthropicApiKey, config.authToken];
 const publicBaseUrl = (process.env.PUBLIC_BASE_URL
   ?? "https://rss7-ai-orchestrator-415190643779.asia-northeast1.run.app").replace(/\/$/, "");
 const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "chatgpt-rss7";
-const chatGptCallbackPrefix = "https://chatgpt.com/connector/oauth/";
+const mcpResource = `${publicBaseUrl}/mcp`;
 
 function textResult(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
@@ -84,39 +91,6 @@ function isAllowedRedirectUri(redirectUri: string): boolean {
   }
 }
 
-type AuthorizationCodePayload = {
-  redirectUri: string;
-  codeChallenge: string;
-  expiresAt: number;
-};
-
-function sign(encodedPayload: string): string {
-  return createHmac("sha256", config.authToken).update(encodedPayload).digest("base64url");
-}
-
-function createAuthorizationCode(payload: AuthorizationCodePayload): string {
-  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${encodedPayload}.${sign(encodedPayload)}`;
-}
-
-function readAuthorizationCode(code: string): AuthorizationCodePayload | null {
-  const [encodedPayload, suppliedSignature, extra] = code.split(".");
-  if (!encodedPayload || !suppliedSignature || extra) return null;
-
-  const expectedSignature = sign(encodedPayload);
-  const supplied = Buffer.from(suppliedSignature);
-  const expected = Buffer.from(expectedSignature);
-  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
-
-  try {
-    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as AuthorizationCodePayload;
-    if (!payload.redirectUri || !payload.codeChallenge || payload.expiresAt < Date.now()) return null;
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
 const authorizationServerMetadata = {
   issuer: publicBaseUrl,
   authorization_endpoint: `${publicBaseUrl}/oauth/authorize`,
@@ -131,13 +105,15 @@ const authorizationServerMetadata = {
 app.get("/.well-known/oauth-authorization-server", (_req, res) => {
   res.json(authorizationServerMetadata);
 });
-app.get("/.well-known/oauth-protected-resource/mcp", (_req, res) => {
+function protectedResourceMetadata(_req: Request, res: Response) {
   res.json({
-    resource: `${publicBaseUrl}/mcp`,
+    resource: mcpResource,
     authorization_servers: [publicBaseUrl],
     scopes_supported: ["mcp"],
   });
-});
+}
+app.get("/.well-known/oauth-protected-resource", protectedResourceMetadata);
+app.get("/.well-known/oauth-protected-resource/mcp", protectedResourceMetadata);
 
 app.get("/oauth/authorize", (req, res) => {
   const clientId = value(req.query.client_id);
@@ -147,9 +123,11 @@ app.get("/oauth/authorize", (req, res) => {
   const codeChallenge = value(req.query.code_challenge);
   const codeChallengeMethod = value(req.query.code_challenge_method);
   const scope = value(req.query.scope) || "mcp";
+  const resource = value(req.query.resource);
 
   if (clientId !== oauthClientId || responseType !== "code" || !state
-    || !isAllowedRedirectUri(redirectUri) || !codeChallenge || codeChallengeMethod !== "S256") {
+    || !isAllowedRedirectUri(redirectUri) || !codeChallenge || codeChallengeMethod !== "S256"
+    || scope !== "mcp" || resource !== mcpResource) {
     res.status(400).send("Invalid OAuth authorization request");
     return;
   }
@@ -168,6 +146,7 @@ button{background:#111;color:#fff;border:0;border-radius:8px}p{line-height:1.6;c
 <input type="hidden" name="state" value="${html(state)}">
 <input type="hidden" name="code_challenge" value="${html(codeChallenge)}">
 <input type="hidden" name="scope" value="${html(scope)}">
+<input type="hidden" name="resource" value="${html(resource)}">
 <button type="submit">接続を許可</button></form></body></html>`);
 });
 
@@ -177,12 +156,15 @@ app.post("/oauth/authorize", (req, res) => {
   const redirectUri = value(req.body.redirect_uri);
   const state = value(req.body.state);
   const codeChallenge = value(req.body.code_challenge);
+  const scope = value(req.body.scope);
+  const resource = value(req.body.resource);
 
-  if (accessKey !== config.authToken) {
+  if (!secretsMatch(accessKey, config.authToken)) {
     res.status(401).send("認証トークンが正しくありません");
     return;
   }
-  if (clientId !== oauthClientId || !state || !isAllowedRedirectUri(redirectUri) || !codeChallenge) {
+  if (clientId !== oauthClientId || !state || !isAllowedRedirectUri(redirectUri) || !codeChallenge
+    || scope !== "mcp" || resource !== mcpResource) {
     res.status(400).send("Invalid OAuth authorization request");
     return;
   }
@@ -190,8 +172,9 @@ app.post("/oauth/authorize", (req, res) => {
   const code = createAuthorizationCode({
     redirectUri,
     codeChallenge,
+    resource,
     expiresAt: Date.now() + 5 * 60 * 1000,
-  });
+  }, config.authToken);
   const destination = new URL(redirectUri);
   destination.searchParams.set("code", code);
   destination.searchParams.set("state", state);
@@ -204,27 +187,39 @@ app.post("/oauth/token", (req, res) => {
   const clientId = value(req.body.client_id);
   const redirectUri = value(req.body.redirect_uri);
   const codeVerifier = value(req.body.code_verifier);
-  const payload = readAuthorizationCode(value(req.body.code));
-
-  const challenge = codeVerifier
-    ? createHash("sha256").update(codeVerifier).digest("base64url")
-    : "";
+  const resource = value(req.body.resource);
+  const payload = readAuthorizationCode(value(req.body.code), config.authToken);
+  const challenge = codeVerifier ? pkceChallenge(codeVerifier) : "";
 
   if (grantType !== "authorization_code" || clientId !== oauthClientId || !payload
-    || payload.redirectUri !== redirectUri || payload.codeChallenge !== challenge) {
+    || payload.redirectUri !== redirectUri || payload.codeChallenge !== challenge
+    || payload.resource !== resource || resource !== mcpResource) {
     res.status(400).json({ error: "invalid_grant" });
     return;
   }
 
+  const expiresIn = 60 * 60;
   res.json({
-    access_token: config.authToken,
+    access_token: createAccessToken({
+      issuer: publicBaseUrl,
+      audience: mcpResource,
+      scope: "mcp",
+      expiresAt: Date.now() + expiresIn * 1000,
+    }, config.authToken),
     token_type: "Bearer",
     scope: "mcp",
+    expires_in: expiresIn,
   });
 });
 
 function authenticate(req: Request, res: Response, next: NextFunction) {
-  if (req.headers.authorization === `Bearer ${config.authToken}`) return next();
+  const authorization = req.headers.authorization ?? "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (secretsMatch(token, config.authToken) || readAccessToken(token, config.authToken, {
+    issuer: publicBaseUrl,
+    audience: mcpResource,
+    scope: "mcp",
+  })) return next();
   res.set("WWW-Authenticate",
     `Bearer resource_metadata="${publicBaseUrl}/.well-known/oauth-protected-resource/mcp", scope="mcp"`);
   res.status(401).json({ error: "Unauthorized" });

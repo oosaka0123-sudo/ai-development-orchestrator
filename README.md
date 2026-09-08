@@ -7,6 +7,7 @@ GPTをプロジェクトマネージャー、Claude Agentを実装担当、GitHu
 - `orchestrator_status`: 接続設定の確認（秘密値は表示しません）
 - `plan_repository_task`: リポジトリを読み、変更せずに実装計画を作成
 - `execute_repository_task`: 承認済みタスクを新規ブランチで実装し、コミット・push・PR作成
+- ChatGPTのカスタムMCP接続向けOAuth 2.1（認可コード + PKCE S256）
 - 同一リポジトリへの同時書き込みを拒否
 - `main`への直接push、PRの自動マージ、本番デプロイは行わない
 
@@ -29,6 +30,9 @@ AI Development Orchestrator
 - `GITHUB_TOKEN`: 対象リポジトリのContents/Pull requests書き込み権限
 - `MCP_AUTH_TOKEN`: MCP接続用の長いランダム文字列
 - `DEFAULT_OWNER`: 通常使うGitHub所有者（初期値 `oosaka0123-sudo`）
+- `PUBLIC_BASE_URL`: 公開HTTPS URL（末尾の `/` なし）
+- `OAUTH_CLIENT_ID`: ChatGPT接続で使用するOAuthクライアントID
+- `MCP_ALLOWED_HOSTS`: 受け付けるHost名のカンマ区切り一覧
 
 秘密情報は`.env`へ置き、GitHubへコミットしないでください。
 
@@ -41,6 +45,12 @@ npm run dev
 ```
 
 ヘルスチェックは `GET /health`、MCPエンドポイントは `POST /mcp` です。
+
+## ChatGPTから接続
+
+HTTPSでデプロイした後、ChatGPTの開発者モードから `PUBLIC_BASE_URL` の `/mcp` をMCPサーバーURLとして追加します。認可画面では `MCP_AUTH_TOKEN` の値を入力します。
+
+OAuthのディスカバリーメタデータ、認可コードフロー、PKCE S256、Resource Indicatorsに対応しています。認可コードは5分、発行されるアクセストークンは1時間で失効し、issuer・audience・scopeをMCPリソース側で検証します。従来のBearerトークン認証も互換性のため継続して利用できます。
 
 ## 安全設計
 
