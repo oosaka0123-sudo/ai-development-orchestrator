@@ -1,8 +1,20 @@
 export type ControlCommand = "continue" | "resume";
 
+const REPO_SEGMENT = /^[A-Za-z0-9_.-]+$/;
+
 export function parseControlCommand(value: string | undefined): ControlCommand {
   if (value === "continue" || value === "resume") return value;
   throw new Error("CONTROL_COMMAND must be continue or resume");
+}
+
+export function normalizeControlRepository(value: string | undefined, defaultOwner: string): string {
+  const repository = value?.trim() ?? "";
+  if (!repository || !REPO_SEGMENT.test(defaultOwner)) throw new Error("Invalid control repository");
+  const parts = repository.split("/");
+  const owner = parts.length === 1 ? defaultOwner : parts[0];
+  const repo = parts.length === 1 ? parts[0] : parts.length === 2 ? parts[1] : "";
+  if (owner !== defaultOwner || !REPO_SEGMENT.test(repo)) throw new Error("Control repository is outside the configured owner");
+  return `${owner}/${repo}`;
 }
 
 export function buildControlTask(command: ControlCommand): string {
