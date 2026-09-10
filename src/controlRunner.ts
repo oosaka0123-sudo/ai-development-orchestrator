@@ -1,6 +1,6 @@
 import path from "node:path";
 import type { AppConfig } from "./config.js";
-import { buildControlTask, parseControlCommand } from "./controlTask.js";
+import { buildControlTask, normalizeControlRepository, parseControlCommand } from "./controlTask.js";
 import { safeErrorText } from "./logging.js";
 import { executeTask } from "./orchestrator.js";
 
@@ -11,7 +11,8 @@ function required(name: string): string {
 }
 
 async function main() {
-  const repository = required("CONTROL_REPOSITORY");
+  const defaultOwner = process.env.DEFAULT_OWNER ?? "oosaka0123-sudo";
+  const repository = normalizeControlRepository(required("CONTROL_REPOSITORY"), defaultOwner);
   const command = parseControlCommand(required("CONTROL_COMMAND"));
   const githubToken = required("ORCHESTRATOR_GITHUB_TOKEN");
   const anthropicApiKey = required("ANTHROPIC_API_KEY");
@@ -22,7 +23,7 @@ async function main() {
     authToken: "control-runner-no-http-auth",
     githubToken,
     anthropicApiKey,
-    defaultOwner: process.env.DEFAULT_OWNER ?? "oosaka0123-sudo",
+    defaultOwner,
   };
 
   const result = await executeTask(config, repository, buildControlTask(command), true);
