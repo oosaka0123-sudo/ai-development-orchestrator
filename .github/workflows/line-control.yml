@@ -1,0 +1,37 @@
+name: LINE Project Control
+
+on:
+  repository_dispatch:
+    types: [line-control]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: line-control-${{ github.event.client_payload.repository }}
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CONTROL_REPOSITORY: ${{ github.event.client_payload.repository }}
+      CONTROL_COMMAND: ${{ github.event.client_payload.command }}
+      DEFAULT_OWNER: oosaka0123-sudo
+      ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Checkout orchestrator
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Execute approved control command
+        run: node dist/controlRunner.js

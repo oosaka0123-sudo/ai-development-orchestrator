@@ -7,6 +7,7 @@ GPTをプロジェクトマネージャー、Claude Agentを実装担当、GitHu
 - `orchestrator_status`: 接続設定の確認（秘密値は表示しません）
 - `plan_repository_task`: リポジトリを読み、変更せずに実装計画を作成
 - `execute_repository_task`: 承認済みタスクを新規ブランチで実装し、コミット・push・PR作成
+- LINE管制塔からの `repository_dispatch: line-control` を中央キューとして受け、対象Repositoryの明確な未完了作業をClaude Agentへ安全に再委任
 - ChatGPTのカスタムMCP接続向けOAuth 2.1（認可コード + PKCE S256）
 - 同一リポジトリへの同時書き込みを拒否
 - `main`への直接push、PRの自動マージ、本番デプロイは行わない
@@ -20,6 +21,15 @@ ChatGPT Work / GPT
 AI Development Orchestrator
         ├── Claude Agent SDK（調査・編集・テスト）
         └── GitHub（branch・commit・pull request）
+
+LINE Project Control
+        │ repository_dispatch: line-control
+        ▼
+GitHub Actions durable queue
+        ▼
+AI Development Orchestrator controlRunner
+        ▼
+Claude Agent SDK → branch → tests → Pull Request
 ```
 
 ## 必要な設定
@@ -51,6 +61,23 @@ npm run dev
 HTTPSでデプロイした後、ChatGPTの開発者モードから `PUBLIC_BASE_URL` の `/mcp` をMCPサーバーURLとして追加します。認可画面では `MCP_AUTH_TOKEN` の値を入力します。
 
 OAuthのディスカバリーメタデータ、認可コードフロー、PKCE S256、Resource Indicatorsに対応しています。認可コードは5分、発行されるアクセストークンは1時間で失効し、issuer・audience・scopeをMCPリソース側で検証します。従来のBearerトークン認証も互換性のため継続して利用できます。
+
+## LINE Project Control 中央キュー
+
+LINEの「進めて」「再開」は対象Project自身へWorkflowを配布するのではなく、このRepositoryの `.github/workflows/line-control.yml` へ `repository_dispatch` を送り、GitHub Actionsを耐久キューとして処理します。これにより、`DEFAULT_OWNER` 配下に新しいRepositoryが増えても、対象Repositoryへ専用listenerを追加せず中央Orchestratorから処理できます。
+
+`controlRunner` が受け付けるコマンドは `continue` と `resume` のみです。Repository名は `DEFAULT_OWNER` 配下に正規化し、別Owner、壊れたパス、追加セグメントは拒否します。実装指示はユーザー入力をそのままClaudeへ渡さず、`src/controlTask.ts` の固定安全テンプレートから生成します。
+
+LINEボタン押下は、その1回の再開作業に対する明示承認として扱います。実行時も既存 `executeTask(..., confirmed=true)` を通るため、一時ワークスペース、新規branch、同一Repository同時書き込み拒否、Secret保護、ツールallowlist、PRまでで停止する既存安全境界は変わりません。
+
+GitHub Actionsで実稼働させる場合は、Repository Actions Secretsに次の値を設定します。値そのものはGitHubのファイル、Issue、PR、ログへ保存しません。
+
+- `ORCHESTRATOR_GITHUB_TOKEN`: 対象Repositoryへbranch/commit/PR作成できる専用credential
+- `ANTHROPIC_API_KEY`: Claude Agent実行用
+
+標準のActions `GITHUB_TOKEN` は他Repository操作に必要な権限を持たない場合があるため、中央キューは意図的に `ORCHESTRATOR_GITHUB_TOKEN` を必須にし、未設定ならfail-closedします。
+
+中央再開タスクは、編集前にcurrent default branch、実在するProjectルール、Open Issues、Open PRs、最新Actions、現在コードを確認するよう固定されています。既存PRと同じ作業を重複実装せず、Human Gate、曖昧な製品判断、ログイン、権限不足、危険な操作が必要なら変更せずblockerを返します。自動merge・本番deploy・Secret/IAM/Billing変更は行いません。
 
 ## 安全設計
 
