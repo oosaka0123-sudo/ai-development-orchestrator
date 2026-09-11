@@ -1,0 +1,52 @@
+name: RSS7 HOUSE Council Once
+
+on:
+  push:
+    branches:
+      - tmp/rss7-house-council-20260911
+    paths:
+      - .github/workflows/rss7-house-council-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  council:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Run 3-agent council only
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { runResumeCouncil } from './dist/council.js';
+          const config = {
+            port: 0,
+            workspaceRoot: '.workspaces',
+            authToken: 'council-only',
+            githubToken: process.env.ORCHESTRATOR_GITHUB_TOKEN,
+            anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+            geminiApiKey: process.env.GEMINI_API_KEY,
+            openaiApiKey: process.env.OPENAI_API_KEY,
+            anthropicCouncilModel: process.env.ANTHROPIC_COUNCIL_MODEL ?? 'claude-sonnet-5',
+            geminiCouncilModel: process.env.GEMINI_COUNCIL_MODEL ?? 'gemini-3.8-flash',
+            openaiCouncilModel: process.env.OPENAI_COUNCIL_MODEL ?? 'gpt-5.6-terra',
+            defaultOwner: 'oosaka0123-sudo'
+          };
+          const result = await runResumeCouncil(config, 'oosaka0123-sudo/rss7-house');
+          console.log('COUNCIL_RESULT_START');
+          console.log(JSON.stringify(result, null, 2));
+          console.log('COUNCIL_RESULT_END');
+          NODE
