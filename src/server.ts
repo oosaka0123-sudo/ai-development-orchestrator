@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { z } from "zod";
 import { loadConfig } from "./config.js";
+import { isGitHubAuthConfigured } from "./githubAppAuth.js";
 import { repositorySchema, taskSchema } from "./inputSchemas.js";
 import { logError } from "./logging.js";
 import { executeTask, planTask } from "./orchestrator.js";
@@ -17,7 +18,7 @@ import {
 } from "./oauth.js";
 
 const config = loadConfig();
-const secrets = [config.githubToken, config.anthropicApiKey, config.authToken];
+const secrets = [config.githubToken, config.githubAppPrivateKey, config.anthropicApiKey, config.authToken];
 const publicBaseUrl = (process.env.PUBLIC_BASE_URL
   ?? "https://rss7-ai-orchestrator-415190643779.asia-northeast1.run.app").replace(/\/$/, "");
 const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "chatgpt-rss7";
@@ -36,7 +37,7 @@ function createServer(): McpServer {
   }, async () => textResult({
     ok: true,
     anthropicConfigured: Boolean(config.anthropicApiKey),
-    githubConfigured: Boolean(config.githubToken),
+    githubConfigured: isGitHubAuthConfigured(config),
     defaultOwner: config.defaultOwner,
   }));
 

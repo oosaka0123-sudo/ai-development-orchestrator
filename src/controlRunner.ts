@@ -5,6 +5,7 @@ import { councilImplementationContext, runResumeCouncil } from "./council.js";
 import { buildControlTask, normalizeControlRepository, parseControlCommand } from "./controlTask.js";
 import { safeErrorText } from "./logging.js";
 import { executeTask } from "./orchestrator.js";
+import { resolveGitHubToken } from "./githubAppAuth.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -16,14 +17,16 @@ async function main() {
   const defaultOwner = process.env.DEFAULT_OWNER ?? "oosaka0123-sudo";
   const repository = normalizeControlRepository(required("CONTROL_REPOSITORY"), defaultOwner);
   const command = parseControlCommand(required("CONTROL_COMMAND"));
-  const githubToken = required("ORCHESTRATOR_GITHUB_TOKEN");
   const anthropicApiKey = required("ANTHROPIC_API_KEY");
 
   const config: AppConfig = {
     port: 0,
     workspaceRoot: path.resolve(process.env.WORKSPACE_ROOT ?? ".workspaces"),
     authToken: "control-runner-no-http-auth",
-    githubToken,
+    githubToken: process.env.ORCHESTRATOR_GITHUB_TOKEN,
+    githubAppId: process.env.GITHUB_APP_ID,
+    githubInstallationId: process.env.GITHUB_INSTALLATION_ID,
+    githubAppPrivateKey: process.env.GITHUB_APP_PRIVATE_KEY,
     anthropicApiKey,
     geminiApiKey: process.env.GEMINI_API_KEY,
     openaiApiKey: process.env.OPENAI_API_KEY,
@@ -32,6 +35,7 @@ async function main() {
     openaiCouncilModel: process.env.OPENAI_COUNCIL_MODEL ?? "gpt-5.6-terra",
     defaultOwner,
   };
+  config.githubToken = await resolveGitHubToken(config, { repositories: [repository.split("/")[1]] });
 
   let task = buildControlTask(command);
   let council: Awaited<ReturnType<typeof runResumeCouncil>> | undefined;
@@ -66,6 +70,7 @@ async function main() {
 main().catch((error) => {
   const safe = safeErrorText(error, [
     process.env.ORCHESTRATOR_GITHUB_TOKEN,
+    process.env.GITHUB_APP_PRIVATE_KEY,
     process.env.ANTHROPIC_API_KEY,
     process.env.GEMINI_API_KEY,
     process.env.OPENAI_API_KEY,

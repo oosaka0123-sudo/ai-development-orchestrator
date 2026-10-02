@@ -5,6 +5,9 @@ export interface AppConfig {
   workspaceRoot: string;
   authToken: string;
   githubToken?: string;
+  githubAppId?: string;
+  githubInstallationId?: string;
+  githubAppPrivateKey?: string;
   anthropicApiKey?: string;
   geminiApiKey?: string;
   openaiApiKey?: string;
@@ -32,6 +35,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     workspaceRoot: path.resolve(env.WORKSPACE_ROOT ?? ".workspaces"),
     authToken,
     githubToken: env.GITHUB_TOKEN,
+    githubAppId: env.GITHUB_APP_ID,
+    githubInstallationId: env.GITHUB_INSTALLATION_ID,
+    githubAppPrivateKey: env.GITHUB_APP_PRIVATE_KEY,
     anthropicApiKey: env.ANTHROPIC_API_KEY,
     geminiApiKey: env.GEMINI_API_KEY,
     openaiApiKey: env.OPENAI_API_KEY,
@@ -43,18 +49,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 }
 
 export function requireSecrets(config: AppConfig): asserts config is AppConfig & {
-  githubToken: string;
   anthropicApiKey: string;
 } {
+  const githubConfigured = Boolean(
+    config.githubToken
+    || (config.githubAppId && config.githubInstallationId && config.githubAppPrivateKey),
+  );
   const missing = [
-    !config.githubToken && "GITHUB_TOKEN",
+    !githubConfigured && "GitHub authentication",
     !config.anthropicApiKey && "ANTHROPIC_API_KEY",
   ].filter(Boolean);
   if (missing.length) throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
 }
 
 export function requireCouncilSecrets(config: AppConfig): asserts config is AppConfig & {
-  githubToken: string;
   anthropicApiKey: string;
   geminiApiKey: string;
   openaiApiKey: string;

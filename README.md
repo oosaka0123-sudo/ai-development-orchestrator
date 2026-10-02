@@ -7,7 +7,7 @@ GPTをプロジェクトマネージャー、Claude Agentを実装担当、GitHu
 - `orchestrator_status`: 接続設定の確認（秘密値は表示しません）
 - `plan_repository_task`: リポジトリを読み、変更せずに実装計画を作成
 - `execute_repository_task`: 承認済みタスクを新規ブランチで実装し、コミット・push・PR作成
-- LINE管制塔からの `repository_dispatch: line-control` を中央キューとして受け、対象Repositoryの明確な未完了作業をClaude Agentへ安全に再委任
+- LINE管制塔から中央Cloud Run Jobを起動し、対象Repositoryの明確な未完了作業をClaude Agentへ安全に再委任
 - `resume` の前にClaude・Gemini・ChatGPTが3ラウンドで独立評価・相互レビュー・最終投票するAI Council gate
 - ChatGPTのカスタムMCP接続向けOAuth 2.1（認可コード + PKCE S256）
 - 同一リポジトリへの同時書き込みを拒否
@@ -24,9 +24,10 @@ AI Development Orchestrator
         └── GitHub（branch・commit・pull request）
 
 LINE Project Control
-        │ repository_dispatch: line-control
+        │ Cloud Run Jobs API
         ▼
-GitHub Actions durable queue
+rss7-ai-control-runner
+        │ GitHub App installation token
         ▼
 AI Development Orchestrator controlRunner
         │
@@ -54,7 +55,10 @@ AI Development Orchestrator controlRunner
 - `ANTHROPIC_API_KEY`: Claude AgentおよびAI CouncilのClaude用APIキー
 - `GEMINI_API_KEY`: AI CouncilのGemini用APIキー
 - `OPENAI_API_KEY`: AI CouncilのChatGPT/OpenAI用APIキー
-- `GITHUB_TOKEN`: 対象リポジトリのContents/Pull requests書き込み権限
+- `GITHUB_APP_ID`: 専用GitHub AppのApp ID
+- `GITHUB_INSTALLATION_ID`: GitHub App installation ID
+- `GITHUB_APP_PRIVATE_KEY`: GitHub App秘密鍵。Secret Managerからのみ注入
+- `GITHUB_TOKEN`: 移行・緊急ロールバック用のみ。本番通常運用では未設定
 - `MCP_AUTH_TOKEN`: MCP接続用の長いランダム文字列
 - `DEFAULT_OWNER`: 通常使うGitHub所有者（初期値 `oosaka0123-sudo`）
 - `PUBLIC_BASE_URL`: 公開HTTPS URL（末尾の `/` なし）
@@ -64,7 +68,7 @@ AI Development Orchestrator controlRunner
 - `GEMINI_COUNCIL_MODEL`: Council Geminiモデル（既定 `gemini-3.8-flash`）
 - `OPENAI_COUNCIL_MODEL`: Council OpenAIモデル（既定 `gpt-5.6-terra`）
 
-秘密情報は`.env`またはGitHub Actions Secrets等のSecret管理へ置き、GitHubへコミットしないでください。モデル名は環境変数で差し替え可能にし、APIキーをコードへ固定しません。
+本番の秘密情報はGoogle Cloud Secret Managerへ置き、GitHubへコミットしません。GitHub AppのInstallation Tokenは実行時に短時間だけ発行し、永続化しません。モデル名は環境変数で差し替え可能にし、APIキーをコードへ固定しません。
 
 ## ローカル確認
 
@@ -84,7 +88,7 @@ OAuthのディスカバリーメタデータ、認可コードフロー、PKCE S
 
 ## LINE Project Control 中央キュー
 
-LINEの「進めて」「再開」は対象Project自身へWorkflowを配布するのではなく、このRepositoryの `.github/workflows/line-control.yml` へ `repository_dispatch` を送り、GitHub Actionsを耐久キューとして処理します。これにより、`DEFAULT_OWNER` 配下に新しいRepositoryが増えても、対象Repositoryへ専用listenerを追加せず中央Orchestratorから処理できます。
+LINEの「進めて」「再開」は対象Project自身へWorkflowを配布せず、`rss7-ai-line-control` からGoogle Cloud Run Jobs APIで中央 `rss7-ai-control-runner` を起動します。対象Repositoryへ専用listenerは不要です。旧 `.github/workflows/line-control.yml` はPAT依存を残すため廃止しました。
 
 `controlRunner` が受け付けるコマンドは `continue` と `resume` のみです。Repository名は `DEFAULT_OWNER` 配下に正規化し、別Owner、壊れたパス、追加セグメントは拒否します。実装指示はユーザー入力をそのままClaudeへ渡さず、`src/controlTask.ts` の固定安全テンプレートから生成します。
 
@@ -104,14 +108,9 @@ CouncilはGitHubからdefault branch HEAD、Open Issues、Open Pull Requests、r
 
 LINEボタン押下は、その1回の再開作業に対する明示承認として扱います。Council通過後の実行も既存 `executeTask(..., confirmed=true)` を通るため、一時ワークスペース、新規branch、同一Repository同時書き込み拒否、Secret保護、ツールallowlist、PRまでで停止する既存安全境界は変わりません。
 
-GitHub Actionsで実稼働させる場合は、Repository Actions Secretsに次の値を設定します。値そのものはGitHubのファイル、Issue、PR、ログへ保存しません。
+Cloud Run Service / Jobでは、GitHub Appの `GITHUB_APP_ID`、`GITHUB_INSTALLATION_ID` と、Secret Managerから注入する `GITHUB_APP_PRIVATE_KEY` を使用します。各実行はGitHubのInstallation Tokenをオンデマンド発行し、PATの定期更新には依存しません。
 
-- `ORCHESTRATOR_GITHUB_TOKEN`: 対象Repositoryへbranch/commit/PR作成できる専用credential
-- `ANTHROPIC_API_KEY`: Claude Agent / Council用
-- `GEMINI_API_KEY`: Council用
-- `OPENAI_API_KEY`: Council用
-
-標準のActions `GITHUB_TOKEN` は他Repository操作に必要な権限を持たない場合があるため、中央キューは意図的に `ORCHESTRATOR_GITHUB_TOKEN` を必須にし、未設定ならfail-closedします。Councilの追加APIキーも `resume` では必須で、未設定の場合は実装へ進みません。
+`ORCHESTRATOR_GITHUB_TOKEN` / `GITHUB_TOKEN` の静的トークン経路は移行時のロールバック互換だけに残し、本番通常運用では設定しません。Councilの追加APIキーは `resume` では引き続き必須で、未設定の場合は実装へ進みません。
 
 中央再開タスクは、編集前にcurrent default branch、実在するProjectルール、Open Issues、Open PRs、最新Actions、現在コードを確認するよう固定されています。既存PRと同じ作業を重複実装せず、Human Gate、曖昧な製品判断、ログイン、権限不足、危険な操作が必要なら変更せずblockerを返します。自動merge・本番deploy・Secret/IAM/Billing変更は行いません。
 
