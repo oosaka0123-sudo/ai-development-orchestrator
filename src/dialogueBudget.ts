@@ -22,3 +22,13 @@ export function requireBudget(session: DialogueSession, provider: DialogueProvid
   const reserved = estimateUsd(rate, 12000, 1500);
   if (spent + reserved > session.maxEstimatedUsd) throw new BudgetExceededError("Session budget cannot cover next turn");
 }
+
+/** Fail closed when a documented introductory model price expires. */
+export function assertPricingNotExpired(pricing: Pricing, now: Date = new Date()): void {
+  if (now.getTime() >= Date.parse("2027-01-01T00:00:00Z")) {
+    const gemini = pricing["gemini-3.8-flash"];
+    if (gemini && (gemini.inputUsdPerMillion < 1.5 || gemini.outputUsdPerMillion < 7.5)) {
+      throw new Error("Gemini 3.8 Flash introductory pricing expired; update COUNCIL_MODEL_PRICING_JSON");
+    }
+  }
+}
