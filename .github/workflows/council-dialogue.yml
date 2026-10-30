@@ -38,4 +38,5 @@ jobs:
           ANTHROPIC_COUNCIL_MODEL: ${{ vars.ANTHROPIC_COUNCIL_MODEL }}
           GEMINI_COUNCIL_MODEL: ${{ vars.GEMINI_COUNCIL_MODEL }}
           COUNCIL_MODEL_PRICING_JSON: ${{ vars.COUNCIL_MODEL_PRICING_JSON }}
+          COUNCIL_USD_JPY_BUDGET_RATE: ${{ vars.COUNCIL_USD_JPY_BUDGET_RATE }}
         run: node dist/dialogueJob.js "${{ inputs.session_id }}"
