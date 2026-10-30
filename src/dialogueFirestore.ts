@@ -29,6 +29,22 @@ export class FirestoreDialogueStore implements DialogueStore {
     if (!data) return null;
     return { id: data.id, project: data.project, state: data.state, turns: data.turns, maxEstimatedUsd: data.maxEstimatedUsd, topic: data.topic };
   }
+  async reserveMonthlyBudget(estimatedUsd: number, usdJpy: number): Promise<void> {
+    if (!Number.isFinite(estimatedUsd) || estimatedUsd <= 0 || !Number.isFinite(usdJpy) || usdJpy <= 0) {
+      throw new Error("Invalid monthly budget reservation");
+    }
+    const month = new Date().toISOString().slice(0, 7);
+    const ref = this.collection.firestore.collection("council_monthly_limits").doc(month);
+    const requestedYen = Math.ceil(estimatedUsd * usdJpy * 100) / 100;
+    await this.collection.firestore.runTransaction(async transaction => {
+      const snapshot = await transaction.get(ref);
+      const reservedYen = snapshot.data()?.reservedYen ?? 0;
+      if (!Number.isFinite(reservedYen) || reservedYen < 0 || reservedYen + requestedYen > 500) {
+        throw new Error("Monthly 500 JPY reservation limit reached");
+      }
+      transaction.set(ref, { month, reservedYen: reservedYen + requestedYen, capYen: 500 });
+    });
+  }
   async claim(id: string): Promise<boolean> {
     const ref = this.collection.doc(id);
     return this.collection.firestore.runTransaction(async transaction => {
