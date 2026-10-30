@@ -31,6 +31,7 @@ jobs:
       - name: Run four-turn council
         env:
           GOOGLE_CLOUD_PROJECT: ${{ vars.COUNCIL_GCP_PROJECT }}
+          COUNCIL_SESSION_ID: ${{ inputs.session_id }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -39,4 +40,4 @@ jobs:
           GEMINI_COUNCIL_MODEL: ${{ vars.GEMINI_COUNCIL_MODEL }}
           COUNCIL_MODEL_PRICING_JSON: ${{ vars.COUNCIL_MODEL_PRICING_JSON }}
           COUNCIL_USD_JPY_BUDGET_RATE: ${{ vars.COUNCIL_USD_JPY_BUDGET_RATE }}
-        run: node dist/dialogueJob.js "${{ inputs.session_id }}"
+        run: node dist/dialogueJob.js "$COUNCIL_SESSION_ID"
