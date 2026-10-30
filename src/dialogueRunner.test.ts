@@ -30,3 +30,18 @@ test("budget stop prevents further provider calls", async () => {
   assert.equal(result.state, "ABORTED_BY_BUDGET");
   assert.equal(calls, 1);
 });
+
+test("provider failure persists FAILED state without fabricating another turn", async () => {
+  const calls: string[] = [];
+  const saved: DialogueSession[] = [];
+  await assert.rejects(runDialogue(startDialogue("three", "owner/repo", 1), "video", {
+    async ask(provider) {
+      calls.push(provider);
+      if (provider === "claude") throw new Error("Provider unavailable");
+      return { provider, model: "mock", response: "first response", usage: { inputTokens: 2, outputTokens: 3, estimatedUsd: 0.01 } };
+    },
+  }, { async save(s) { saved.push(structuredClone(s)); } }), /Provider unavailable/);
+  assert.deepEqual(calls, ["chatgpt", "claude"]);
+  assert.equal(saved.at(-1)?.state, "FAILED");
+  assert.equal(saved.at(-1)?.turns.length, 1);
+});
