@@ -68,7 +68,7 @@ function createServer(): McpServer {
     inputSchema: {
       project: repositorySchema,
       topic: z.string().min(10).max(4000),
-      maxEstimatedUsd: z.number().min(0.01).max(2).default(1),
+      maxEstimatedUsd: z.number().min(0.01).max(0.5).default(0.1),
     },
   }, async ({ project, topic, maxEstimatedUsd }) => {
     const allowed = (process.env.COUNCIL_ALLOWED_REPOS ?? "oosaka0123-sudo/otona-smart-ai")
