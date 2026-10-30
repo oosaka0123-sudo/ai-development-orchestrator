@@ -20,6 +20,12 @@ test("Gemini adapter preserves raw output", async () => {
   const fake = (async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Gemini answer" }] } }], usageMetadata: { promptTokenCount: 6, candidatesTokenCount: 4 } }), { status: 200 })) as typeof fetch;
   assert.equal((await askDialogueModel("gemini", "hello", settings, fake)).response, "Gemini answer");
 });
+test("Gemini thinking tokens are counted for budget estimates", async () => {
+  const fake = (async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Reasoned answer" }] } }],
+    usageMetadata: { promptTokenCount: 6, candidatesTokenCount: 4, thoughtsTokenCount: 12 } }), { status: 200 })) as typeof fetch;
+  const reply = await askDialogueModel("gemini", "hello", settings, fake);
+  assert.equal(reply.outputTokens, 16);
+});
 test("HTTP errors do not fabricate model output", async () => {
   const fake = (async () => new Response("error", { status: 503 })) as typeof fetch;
   await assert.rejects(() => askDialogueModel("claude", "hello", settings, fake), /HTTP 503/);
