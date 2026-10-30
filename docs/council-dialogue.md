@@ -19,6 +19,14 @@ This feature is **not active** until merged and provisioned. It does not replace
 
 ## Remaining work
 - No automatic GitHub result summary, implementation approval or code-generation trigger yet.
-- No cross-session monthly cost limit, invoice reconciliation, or Firestore retention/deletion automation yet.
+- A transactional monthly 500 JPY reservation cap is implemented, but it is not invoice reconciliation or a provider-side hard billing cap. Firestore retention/deletion automation is not implemented.
 - Windows symlink security tests may fail with EPERM without developer mode; Linux CI is authoritative.
 - Do not claim real three-provider API validation until an actual session completes.
+
+## Budget guardrails (October 2026)
+- Monthly reservation cap: 500 JPY across sessions, transactionally reserved at session creation.
+- `COUNCIL_USD_JPY_BUDGET_RATE` must be set on the **MCP Cloud Run runtime**, not merely as a GitHub repository variable. Use a conservative value (currently 200).
+- The default session budget is USD 0.10 (20 JPY reserved at 200 JPY/USD), maximum USD 0.50.
+- Reservations are not refunded automatically after failed/unused sessions; this is intentionally conservative. Actual provider bills, exchange-rate changes, retries, grounding and other cloud charges are NOT covered by the reservation cap.
+- Do not enable paid API execution until provider-level spending alerts/limits, valid model IDs and current verified price mapping are configured.
+- Never put API keys or service account credentials in repository variables or committed files.
