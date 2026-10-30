@@ -11,12 +11,23 @@ export class FirestoreDialogueStore implements DialogueStore {
     const today = new Date().toISOString().slice(0, 10);
     const daily = this.collection.firestore.collection("council_daily_limits").doc(today);
     const ref = this.collection.doc(session.id);
+    const usdJpy = Number(process.env.COUNCIL_USD_JPY_BUDGET_RATE);
+    if (!Number.isFinite(usdJpy) || usdJpy < 100) throw new Error("COUNCIL_USD_JPY_BUDGET_RATE must be configured conservatively");
+    const month = new Date().toISOString().slice(0, 7);
+    const monthly = this.collection.firestore.collection("council_monthly_limits").doc(month);
+    const requestedYen = Math.ceil(session.maxEstimatedUsd * usdJpy * 100) / 100;
     await this.collection.firestore.runTransaction(async transaction => {
       const counter = await transaction.get(daily);
+      const monthlySnapshot = await transaction.get(monthly);
+      const reservedYen = monthlySnapshot.data()?.reservedYen ?? 0;
+      if (!Number.isFinite(reservedYen) || reservedYen < 0 || reservedYen + requestedYen > 500) {
+        throw new Error("Monthly 500 JPY reservation limit reached");
+      }
       const count = counter.data()?.count ?? 0;
       if (count >= 5) throw new Error("Daily council limit reached");
       transaction.create(ref, { ...session, topic, updatedAt: new Date().toISOString() });
       transaction.set(daily, { count: count + 1, date: today });
+      transaction.set(monthly, { month, reservedYen: reservedYen + requestedYen, capYen: 500 });
     });
   }
   async save(session: DialogueSession): Promise<void> {
@@ -28,22 +39,6 @@ export class FirestoreDialogueStore implements DialogueStore {
     const data = snapshot.data();
     if (!data) return null;
     return { id: data.id, project: data.project, state: data.state, turns: data.turns, maxEstimatedUsd: data.maxEstimatedUsd, topic: data.topic };
-  }
-  async reserveMonthlyBudget(estimatedUsd: number, usdJpy: number): Promise<void> {
-    if (!Number.isFinite(estimatedUsd) || estimatedUsd <= 0 || !Number.isFinite(usdJpy) || usdJpy <= 0) {
-      throw new Error("Invalid monthly budget reservation");
-    }
-    const month = new Date().toISOString().slice(0, 7);
-    const ref = this.collection.firestore.collection("council_monthly_limits").doc(month);
-    const requestedYen = Math.ceil(estimatedUsd * usdJpy * 100) / 100;
-    await this.collection.firestore.runTransaction(async transaction => {
-      const snapshot = await transaction.get(ref);
-      const reservedYen = snapshot.data()?.reservedYen ?? 0;
-      if (!Number.isFinite(reservedYen) || reservedYen < 0 || reservedYen + requestedYen > 500) {
-        throw new Error("Monthly 500 JPY reservation limit reached");
-      }
-      transaction.set(ref, { month, reservedYen: reservedYen + requestedYen, capYen: 500 });
-    });
   }
   async claim(id: string): Promise<boolean> {
     const ref = this.collection.doc(id);
