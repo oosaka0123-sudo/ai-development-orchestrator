@@ -5,10 +5,10 @@ export type Pricing = Record<string, ModelRate>;
 export function readPricing(raw: string | undefined): Pricing {
   if (!raw) throw new Error("COUNCIL_MODEL_PRICING_JSON is required");
   const pricing = JSON.parse(raw) as Pricing;
-  if (!pricing || typeof pricing !== "object") throw new Error("Invalid pricing");
+  if (!pricing || typeof pricing !== "object" || Array.isArray(pricing) || Object.keys(pricing).length === 0) throw new Error("Invalid pricing");
   for (const value of Object.values(pricing)) {
-    if (!value || !Number.isFinite(value.inputUsdPerMillion) || value.inputUsdPerMillion < 0 ||
-      !Number.isFinite(value.outputUsdPerMillion) || value.outputUsdPerMillion < 0) throw new Error("Invalid price entry");
+    if (!value || !Number.isFinite(value.inputUsdPerMillion) || value.inputUsdPerMillion <= 0 ||
+      !Number.isFinite(value.outputUsdPerMillion) || value.outputUsdPerMillion <= 0) throw new Error("Invalid price entry");
   }
   return pricing;
 }
