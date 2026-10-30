@@ -5,6 +5,9 @@ import { startDialogue } from "./dialogueState.js";
 test("pricing is mandatory and checked", () => {
   assert.throws(() => readPricing(undefined));
   assert.throws(() => readPricing('{"m":{"inputUsdPerMillion":-1,"outputUsdPerMillion":1}}'));
+  assert.throws(() => readPricing('{}'));
+  assert.throws(() => readPricing('{"m":{"inputUsdPerMillion":0,"outputUsdPerMillion":1}}'));
+  assert.throws(() => readPricing('{"m":{"inputUsdPerMillion":1,"outputUsdPerMillion":0}}'));
 });
 test("estimated cost uses per-million-token prices", () => {
   assert.equal(estimateUsd({ inputUsdPerMillion: 2, outputUsdPerMillion: 4 }, 1000000, 1000000), 6);
