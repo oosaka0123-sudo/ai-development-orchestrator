@@ -6,7 +6,7 @@ export type DialogueProvider = "chatgpt" | "claude" | "gemini";
 export type DialogueState = "QUEUED" | "RUNNING" | "WAITING_APPROVAL" | "APPROVED" | "IMPLEMENTING" | "COMPLETED" | "FAILED" | "ABORTED_BY_BUDGET" | "CANCELLED";
 export const CONTENT_TURN_ORDER: readonly DialogueProvider[] = ["chatgpt", "claude", "gemini", "chatgpt"];
 export type DialogueUsage = { inputTokens: number; outputTokens: number; estimatedUsd: number };
-export type DialogueTurn = { provider: DialogueProvider; model: string; response: string; usage: DialogueUsage };
+export type DialogueTurn = { provider: DialogueProvider; model: string; prompt?: string; response: string; usage: DialogueUsage };
 export type DialogueSession = {
   id: string;
   project: string;

@@ -3,6 +3,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { Octokit } from "@octokit/rest";
+import { FirestoreDialogueStore } from "./dialogueFirestore.js";
+import { startDialogue } from "./dialogueState.js";
 import { loadConfig } from "./config.js";
 import { repositorySchema, taskSchema } from "./inputSchemas.js";
 import { logError } from "./logging.js";
@@ -58,6 +62,46 @@ function createServer(): McpServer {
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   }, async ({ repository, task, confirmed }) => textResult(await executeTask(config, repository, task, confirmed)));
+
+  server.registerTool("start_council_session", {
+    description: "Queue an asynchronous four-turn three-model content discussion. Does not edit repository code.",
+    inputSchema: {
+      project: repositorySchema,
+      topic: z.string().min(10).max(4000),
+      maxEstimatedUsd: z.number().min(0.01).max(2).default(1),
+    },
+  }, async ({ project, topic, maxEstimatedUsd }) => {
+    const allowed = (process.env.COUNCIL_ALLOWED_REPOS ?? "oosaka0123-sudo/otona-smart-ai")
+      .split(",").map(value => value.trim().toLowerCase());
+    if (!allowed.includes(project.toLowerCase())) throw new Error("Project not allowed");
+    if (!config.githubToken) throw new Error("GitHub dispatch not configured");
+    const id = randomUUID();
+    const store = new FirestoreDialogueStore(process.env.GOOGLE_CLOUD_PROJECT);
+    await store.create(startDialogue(id, project, maxEstimatedUsd), topic);
+    try {
+      const github = new Octokit({ auth: config.githubToken });
+      await github.actions.createWorkflowDispatch({
+        owner: config.defaultOwner, repo: "ai-development-orchestrator",
+        workflow_id: "council-dialogue.yml", ref: "main", inputs: { session_id: id },
+      });
+    } catch {
+      await store.save({ ...startDialogue(id, project, maxEstimatedUsd), state: "FAILED" });
+      throw new Error("Council queue dispatch failed");
+    }
+    return textResult({ sessionId: id, state: "QUEUED", project });
+  });
+
+  server.registerTool("get_council_status", {
+    description: "Read durable dialogue status and model replies by session id.",
+    inputSchema: { sessionId: z.string().uuid() },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+  }, async ({ sessionId }) => {
+    const store = new FirestoreDialogueStore(process.env.GOOGLE_CLOUD_PROJECT);
+    const session = await store.load(sessionId);
+    if (!session) throw new Error("Session not found");
+    return textResult({ sessionId: session.id, project: session.project,
+      state: session.state, turns: session.turns, estimatedUsd: session.turns.reduce((sum, turn) => sum + turn.usage.estimatedUsd, 0) });
+  });
 
   return server;
 }
