@@ -1,12 +1,13 @@
 import { FirestoreDialogueStore } from "./dialogueFirestore.js";
 import { askDialogueModel } from "./dialogueModels.js";
-import { estimateUsd, readPricing, requireBudget } from "./dialogueBudget.js";
+import { assertPricingNotExpired, estimateUsd, readPricing, requireBudget } from "./dialogueBudget.js";
 import { runDialogue } from "./dialogueRunner.js";
 
 export async function executeDialogueJob(id: string): Promise<void> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Invalid session id");
   const store = new FirestoreDialogueStore(process.env.GOOGLE_CLOUD_PROJECT);
   const pricing = readPricing(process.env.COUNCIL_MODEL_PRICING_JSON);
+  assertPricingNotExpired(pricing);
   const settings = {
     openai: { apiKey: process.env.OPENAI_API_KEY, model: process.env.OPENAI_COUNCIL_MODEL ?? "" },
     claude: { apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_COUNCIL_MODEL ?? "" },
