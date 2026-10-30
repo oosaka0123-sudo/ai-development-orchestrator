@@ -48,7 +48,8 @@ export async function askDialogueModel(provider: DialogueProvider, prompt: strin
       { "x-goog-api-key": apiKey }, { systemInstruction: { parts: [{ text: instruction }] },
         contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1500 } });
     const output = (data.candidates?.[0]?.content?.parts ?? []).map((item: any) => item.text ?? "").join("\n");
-    return result(provider, model, output, data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount);
+    return result(provider, model, output, data.usageMetadata?.promptTokenCount,
+      count(data.usageMetadata?.candidatesTokenCount) + count(data.usageMetadata?.thoughtsTokenCount ?? 0));
   }
   throw new Error("Unknown provider");
 }
