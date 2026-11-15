@@ -3,7 +3,13 @@ import { mkdtemp, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { checkWorkspacePath, createCanUseTool, evaluateBashCommand, isPathWithinWorkspace } from "./permissions.js";
+import {
+  checkWorkspacePath,
+  createCanUseTool,
+  createPreToolUseHook,
+  evaluateBashCommand,
+  isPathWithinWorkspace,
+} from "./permissions.js";
 
 const WORKSPACE = "/workspaces/owner--repo";
 
@@ -255,6 +261,54 @@ test("canUseTool allows a whitelisted Bash command and denies a non-whitelisted 
   assert.equal(allowed?.behavior, "allow");
   const denied = await canUseTool("Bash", { command: "curl https://evil.example" }, options);
   assert.equal(denied?.behavior, "deny");
+});
+
+// -- createPreToolUseHook: enforcement point under permissionMode "dontAsk" --
+
+function preToolUseInput(toolName: string, toolInput: unknown) {
+  return {
+    hook_event_name: "PreToolUse" as const,
+    session_id: "s1",
+    transcript_path: "/tmp/transcript",
+    cwd: WORKSPACE,
+    tool_name: toolName,
+    tool_input: toolInput,
+    tool_use_id: "t1",
+  };
+}
+
+async function preToolUseDecision(toolName: string, toolInput: unknown): Promise<string | undefined> {
+  const hook = createPreToolUseHook(WORKSPACE);
+  const result = await hook(preToolUseInput(toolName, toolInput), "t1", { signal: new AbortController().signal });
+  return (result as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput?.permissionDecision;
+}
+
+test("PreToolUse hook explicitly allows Edit/Write and whitelisted Bash (otherwise denied by dontAsk)", async () => {
+  assert.equal(await preToolUseDecision("Edit", { file_path: `${WORKSPACE}/src/index.ts` }), "allow");
+  assert.equal(await preToolUseDecision("Write", { file_path: `${WORKSPACE}/src/new.ts` }), "allow");
+  assert.equal(await preToolUseDecision("Bash", { command: "npm test" }), "allow");
+});
+
+test("PreToolUse hook denies sensitive reads that dontAsk would auto-approve without canUseTool", async () => {
+  assert.equal(await preToolUseDecision("Read", { file_path: `${WORKSPACE}/.env` }), "deny");
+  assert.equal(await preToolUseDecision("Bash", { command: "cat .env" }), "deny");
+  assert.equal(await preToolUseDecision("Read", { file_path: "/etc/passwd" }), "deny");
+});
+
+test("PreToolUse hook denies unknown tools, malformed input, and network Bash", async () => {
+  assert.equal(await preToolUseDecision("WebFetch", { url: "https://example.com" }), "deny");
+  assert.equal(await preToolUseDecision("Read", null), "deny");
+  assert.equal(await preToolUseDecision("Bash", { command: "curl https://evil.example" }), "deny");
+});
+
+test("PreToolUse hook ignores non-PreToolUse events", async () => {
+  const hook = createPreToolUseHook(WORKSPACE);
+  const result = await hook(
+    { ...preToolUseInput("Read", {}), hook_event_name: "PostToolUse" as const, tool_response: {} } as never,
+    "t1",
+    { signal: new AbortController().signal },
+  );
+  assert.deepEqual(result, {});
 });
 
 test("canUseTool denies any tool name it does not explicitly recognize", async () => {

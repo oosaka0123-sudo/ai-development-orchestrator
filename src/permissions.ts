@@ -1,6 +1,6 @@
 import { promises as fsp } from "node:fs";
 import path from "node:path";
-import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { classifySensitivity } from "./sensitiveFiles.js";
 
 // Forward declaration note: evaluateBashCommand (below) calls
@@ -219,52 +219,87 @@ export async function checkWorkspacePath(candidatePath: string, workspaceRoot: s
   return { allowed: true };
 }
 
+export type ToolDecision = { behavior: "allow" } | { behavior: "deny"; message: string };
+
 /**
- * The sole authority for what the implementation agent may do. Nothing here
- * is "auto-allowed" (see agent.ts's comment on why `allowedTools` is never
- * set) -- every tool call the model attempts is decided here, explicitly,
- * default-deny for anything this function doesn't recognize.
+ * The sole authority for what the implementation agent may do -- every tool
+ * call the model attempts is decided here, explicitly, default-deny for
+ * anything this function doesn't recognize. Enforced through the PreToolUse
+ * hook below (which runs for every call) and also exposed as `canUseTool`.
  */
-export function createCanUseTool(workspaceRoot: string): CanUseTool {
-  return async (toolName, input) => {
-    switch (toolName) {
-      case "Read":
-      case "Edit":
-      case "Write": {
-        const filePath = typeof input.file_path === "string" ? input.file_path : undefined;
-        if (!filePath) {
-          return { behavior: "deny", message: `${toolName} requires a file_path.` };
-        }
-        const verdict = await checkWorkspacePath(filePath, workspaceRoot);
+export async function decideToolUse(
+  toolName: string,
+  input: Record<string, unknown>,
+  workspaceRoot: string,
+): Promise<ToolDecision> {
+  switch (toolName) {
+    case "Read":
+    case "Edit":
+    case "Write": {
+      const filePath = typeof input.file_path === "string" ? input.file_path : undefined;
+      if (!filePath) {
+        return { behavior: "deny", message: `${toolName} requires a file_path.` };
+      }
+      const verdict = await checkWorkspacePath(filePath, workspaceRoot);
+      if (!verdict.allowed) {
+        return { behavior: "deny", message: verdict.reason ?? `${toolName} is not permitted for this path.` };
+      }
+      return { behavior: "allow" };
+    }
+    case "Glob":
+    case "Grep": {
+      const searchPath = typeof input.path === "string" ? input.path : undefined;
+      if (searchPath) {
+        const verdict = await checkWorkspacePath(searchPath, workspaceRoot);
         if (!verdict.allowed) {
           return { behavior: "deny", message: verdict.reason ?? `${toolName} is not permitted for this path.` };
         }
-        return { behavior: "allow" };
       }
-      case "Glob":
-      case "Grep": {
-        const searchPath = typeof input.path === "string" ? input.path : undefined;
-        if (searchPath) {
-          const verdict = await checkWorkspacePath(searchPath, workspaceRoot);
-          if (!verdict.allowed) {
-            return { behavior: "deny", message: verdict.reason ?? `${toolName} is not permitted for this path.` };
-          }
-        }
-        return { behavior: "allow" };
-      }
-      case "Bash": {
-        if (input.dangerouslyDisableSandbox === true) {
-          return { behavior: "deny", message: "Disabling the sandbox is never permitted." };
-        }
-        const command = typeof input.command === "string" ? input.command : "";
-        const verdict = await evaluateBashCommand(command, workspaceRoot);
-        if (!verdict.allowed) {
-          return { behavior: "deny", message: verdict.reason ?? "Command not permitted." };
-        }
-        return { behavior: "allow" };
-      }
-      default:
-        return { behavior: "deny", message: `Tool "${toolName}" is not permitted for this agent.` };
+      return { behavior: "allow" };
     }
+    case "Bash": {
+      if (input.dangerouslyDisableSandbox === true) {
+        return { behavior: "deny", message: "Disabling the sandbox is never permitted." };
+      }
+      const command = typeof input.command === "string" ? input.command : "";
+      const verdict = await evaluateBashCommand(command, workspaceRoot);
+      if (!verdict.allowed) {
+        return { behavior: "deny", message: verdict.reason ?? "Command not permitted." };
+      }
+      return { behavior: "allow" };
+    }
+    default:
+      return { behavior: "deny", message: `Tool "${toolName}" is not permitted for this agent.` };
+  }
+}
+
+export function createCanUseTool(workspaceRoot: string): CanUseTool {
+  return (toolName, input) => decideToolUse(toolName, input, workspaceRoot);
+}
+
+/**
+ * PreToolUse hook: the primary enforcement point. Under
+ * `permissionMode: "dontAsk"` the SDK never calls `canUseTool` -- calls that
+ * would need approval (Edit/Write/most Bash) are denied without it, and calls
+ * that need no approval (file reads inside cwd, read-only Bash such as `cat`)
+ * run without it. Hooks run first for every call, so routing decideToolUse
+ * through here both unblocks the allow-listed calls and applies the
+ * sensitive-file/workspace checks to the auto-approved ones. Anything this
+ * hook doesn't explicitly allow is still denied by dontAsk.
+ */
+export function createPreToolUseHook(workspaceRoot: string): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== "PreToolUse") return {};
+    const toolInput = typeof input.tool_input === "object" && input.tool_input !== null
+      ? input.tool_input as Record<string, unknown>
+      : {};
+    const decision = await decideToolUse(input.tool_name, toolInput, workspaceRoot);
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: decision.behavior,
+        permissionDecisionReason: decision.behavior === "deny" ? decision.message : "Allowed by orchestrator policy.",
+      },
+    };
   };
 }
