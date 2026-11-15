@@ -1,6 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { buildAgentEnv } from "./agentEnv.js";
-import { createCanUseTool } from "./permissions.js";
+import { createCanUseTool, createPreToolUseHook } from "./permissions.js";
 import { createPostToolUseHook } from "./resultFilter.js";
 
 // Turn caps (existing values, kept and named): plan mode is read-only and
@@ -44,15 +44,16 @@ export async function runClaudeAgent(input: {
       model: "sonnet",
       tools: execute ? ["Read", "Glob", "Grep", "Edit", "Write", "Bash"] : ["Read", "Glob", "Grep"],
       // Deliberately not set. `allowedTools` auto-allows the named tools
-      // WITHOUT going through `canUseTool` -- setting it here would bypass
-      // every check below. `tools` above already limits which tools exist
-      // at all; `canUseTool` is what decides whether each individual call
-      // is actually permitted.
+      // without any per-call check. `tools` above already limits which tools
+      // exist at all; the PreToolUse hook below decides whether each
+      // individual call is actually permitted.
       // allowedTools: undefined,
+      // Kept for completeness, but NOT the enforcement point: under
+      // "dontAsk" the SDK never calls canUseTool (see permissions.ts).
       canUseTool: createCanUseTool(input.cwd),
       // "dontAsk": headless-safe. There is no human to answer an interactive
-      // permission prompt, so anything not explicitly allowed by
-      // `canUseTool` is denied outright rather than hanging forever.
+      // permission prompt, so anything the PreToolUse hook doesn't
+      // explicitly allow is denied outright rather than hanging forever.
       permissionMode: "dontAsk",
       // Isolation mode: never load the target repository's own
       // .claude/settings.json / .claude/settings.local.json / CLAUDE.md.
@@ -67,6 +68,7 @@ export async function runClaudeAgent(input: {
       // result and strips anything sensitive before the model ever sees it
       // (see resultFilter.ts) -- not something left to the model to police.
       hooks: {
+        PreToolUse: [{ hooks: [createPreToolUseHook(input.cwd)] }],
         PostToolUse: [{ hooks: [createPostToolUseHook(input.cwd)] }],
       },
       systemPrompt: {
