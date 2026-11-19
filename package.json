@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "latest",
+    "@google-cloud/firestore": "^9.4.0",
     "@modelcontextprotocol/sdk": "latest",
     "@octokit/rest": "latest",
     "express": "latest",
