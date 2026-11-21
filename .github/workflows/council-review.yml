@@ -1,0 +1,48 @@
+name: Review-only 3-AI Council
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  review:
+    if: startsWith(github.event.issue.title, 'Council review: ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEFAULT_OWNER: oosaka0123-sudo
+      ORCHESTRATOR_GITHUB_TOKEN: ${{ secrets.ORCHESTRATOR_GITHUB_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_COUNCIL_MODEL: ${{ secrets.ANTHROPIC_COUNCIL_MODEL }}
+      GEMINI_COUNCIL_MODEL: ${{ secrets.GEMINI_COUNCIL_MODEL }}
+      OPENAI_COUNCIL_MODEL: ${{ secrets.OPENAI_COUNCIL_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Resolve target repository
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          TARGET="${ISSUE_TITLE#Council review: }"
+          if ! [[ "$TARGET" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Invalid repository in issue title"
+            exit 1
+          fi
+          echo "REVIEW_REPOSITORY=$TARGET" >> "$GITHUB_ENV"
+      - name: Run review-only council
+        run: node dist/reviewRunner.js > /tmp/council-review.md
+      - name: Post council result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" --body-file /tmp/council-review.md
