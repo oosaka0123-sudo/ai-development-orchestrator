@@ -33,7 +33,16 @@ async function main() {
     "Return actionable findings grouped High / Medium / Low with exact file paths/evidence.",
     "Explicitly state if there are no High findings. Avoid cosmetic churn.",
   ].join("\n");
-  const result = await planTask(config, repository, task);
+  // Review needs more read-only inspection turns than ordinary planning.
+  // Call the same protected agent path through planTask defaults is insufficient for a full-repo audit,
+  // so REVIEW_MAX_TURNS is passed via the dedicated review helper below.
+  const { prepareWorkspace } = await import("./repository.js");
+  const { parseGitHubRepository } = await import("./repository.js");
+  const { runClaudeAgent } = await import("./agent.js");
+  const ref = parseGitHubRepository(repository, config.defaultOwner);
+  const workspace = await prepareWorkspace(config.workspaceRoot, ref, `review/${Date.now()}`, config.githubToken!);
+  const plan = await runClaudeAgent({ prompt: task, cwd: workspace, mode: "plan", apiKey: config.anthropicApiKey!, maxTurnsOverride: 28 });
+  const result = { repository, plan };
   process.stdout.write([
     "## Claude independent repository review",
     "",
