@@ -28,6 +28,7 @@ export async function runClaudeAgent(input: {
   cwd: string;
   mode: "plan" | "execute";
   apiKey: string;
+  maxTurnsOverride?: number;
 }): Promise<string> {
   const execute = input.mode === "execute";
   const parts: string[] = [];
@@ -40,7 +41,7 @@ export async function runClaudeAgent(input: {
     options: {
       cwd: input.cwd,
       abortController,
-      maxTurns: execute ? EXECUTE_MAX_TURNS : PLAN_MAX_TURNS,
+      maxTurns: input.maxTurnsOverride ?? (execute ? EXECUTE_MAX_TURNS : PLAN_MAX_TURNS),
       model: "sonnet",
       tools: execute ? ["Read", "Glob", "Grep", "Edit", "Write", "Bash"] : ["Read", "Glob", "Grep"],
       // Deliberately not set. `allowedTools` auto-allows the named tools
