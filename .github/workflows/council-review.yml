@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   review:
-    if: startsWith(github.event.issue.title, 'Council review: ')
+    if: "${{ startsWith(github.event.issue.title, 'Council review: ') }}"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
