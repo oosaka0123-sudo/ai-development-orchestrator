@@ -1,0 +1,43 @@
+name: Claude review-only repository audit
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  review:
+    if: "${{ startsWith(github.event.issue.title, 'Claude review: ') }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEFAULT_OWNER: oosaka0123-sudo
+      GITHUB_TOKEN: ${{ github.token }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Resolve target repository
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          TARGET="${ISSUE_TITLE#Claude review: }"
+          if ! [[ "$TARGET" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Invalid repository in issue title"
+            exit 1
+          fi
+          echo "REVIEW_REPOSITORY=$TARGET" >> "$GITHUB_ENV"
+      - name: Run Claude review
+        run: node dist/claudeReviewRunner.js > /tmp/claude-review.md
+      - name: Post result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment "${{ github.event.issue.number }}" --repo "$GITHUB_REPOSITORY" --body-file /tmp/claude-review.md
